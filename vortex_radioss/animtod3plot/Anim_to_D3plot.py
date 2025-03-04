@@ -314,7 +314,7 @@ class readAndConvert:
         if rr.raw_header["nbFacets"] > 0:
             
             shell_part_ids                                              =  np.array(rr.raw_arrays["pTextA"]).astype("U9").astype(int)
-            shell_part_names                                            =  np.char.strip(np.array(list(np.char.split(rr.raw_arrays["pTextA"], sep=":")))[:,1])
+            shell_part_names                                            =  np.char.strip(np.array(list(np.char.split(rr.raw_arrays["pTextA"], sep=":", maxsplit=1)))[:,1])
             shell_part_num                                              = len(shell_part_ids)
 
         else:
