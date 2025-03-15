@@ -142,7 +142,8 @@ class readAndConvert:
         use_shell_mask=True,
         use_solid_mask=False,
         use_beam_mask=False,
-        silent=False
+        silent=False,
+        no_warnings=False
     ):
         """Constructor for a readAndConvert
 
@@ -159,7 +160,7 @@ class readAndConvert:
 
         self._start=time.time()
         self._d3plot = D3plot()
-        self.A_2_D(filepath, use_shell_mask, use_solid_mask, use_beam_mask, silent)
+        self.A_2_D(filepath, use_shell_mask, use_solid_mask, use_beam_mask, silent, no_warnings)
 
     def sequential(input_array):
         
@@ -232,7 +233,7 @@ class readAndConvert:
         # Function to sort strings in human order (so file_stemA101 comes before file_stemA1000)
         return [int(text) if text.isdigit() else text.lower() for text in re.split('(\\d+)', s)]
 
-    def A_2_D(self,file_stem, use_shell_mask, use_solid_mask, use_beam_mask, silent):
+    def A_2_D(self,file_stem, use_shell_mask, use_solid_mask, use_beam_mask, silent, no_warnings):
     
         if os.path.isfile(file_stem + "d3plot"):
             return True
@@ -245,7 +246,8 @@ class readAndConvert:
         self.LOGGER("Mapping database", silent)
         
         if not file_list:
-            print("No files found..\nPlease check file stem:\ne.g\nC:/Folder/ModelA00*\nWould be:\nC:/Folder/Model*")
+            if not no_warnings:
+                print("No files found..\nPlease check file stem:\ne.g\nC:/Folder/ModelA00*\nWould be:\nC:/Folder/Model*")
             return
         else:
             rr = RadiossReader(file_list[0])  
@@ -728,6 +730,6 @@ if __name__ == '__main__':
              
     file_stem = "C:/Users/PC/Downloads/roofc/DynaOpt"
 
-    a2d = readAndConvert(file_stem, use_shell_mask=False, silent=False)
+    a2d = readAndConvert(file_stem, use_shell_mask=False, silent=False, no_warnings=False)
     
       
