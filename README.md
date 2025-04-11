@@ -91,10 +91,10 @@ This module will read in the data from one Radioss Time-History file (Multiple t
 
     ### To display the arrays once they are unpacked
     # Return unpacked dictionary arrays
-    th.arrays
+    th.array
     
     # Print unpacked arrays dictionary keys
-    print(th.arrays.keys())     
+    print(th.array.keys())     
 
 ### Radioss Animation to LS-Dyna D3Plot
 This module will convert Radioss Animation Files to LS-Dyna's D3plot format. The Radioss Time-History files will also be required as they contain data required by D3plot that is not present in the Animation files. This conversion is not comprehensive and is limited to only some common scalar and tensor arrays.
