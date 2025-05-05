@@ -54,7 +54,7 @@ class convert:
         n4      = node_coordinates[shell_node_indexes][:,3]      
         ux      = n1[:,0] - n3[:,0]; uy = n1[:,1] - n3[:,1]; uz = n1[:,2] - n3[:,2]
         vx      = n4[:,0] - n2[:,0]; vy = n4[:,1] - n2[:,1]; vz = n4[:,2] - n2[:,2]        
-        i       = uy*vz - uz*vy; j = uz*vx - ux*vz; k = ux*vy - uy*vx;
+        i       = uy*vz - uz*vy; j = uz*vx - ux*vz; k = ux*vy - uy*vx
         area    = np.sqrt((i*i)+(j*j)+(k*k))*0.5
         mass    = area * shell_thicknesses * shell_densities * shell_is_alive                     
         _       = np.bincount(shell_part_indexes, mass, minlength = n_parts)        
@@ -77,6 +77,131 @@ class convert:
         return sum(data1) + sum(data2)
     
     @staticmethod
+    def normalize(v):
+        norm = np.linalg.norm(v)
+        return v / norm if norm != 0 else v 
+    
+    def get_radioss_local_axes(nodes):
+
+        """
+        Computes the local Radioss coordinate system (x, y, z) and express it in the global system,
+        based on the node coordinates of a shell element.
+
+        Parameters:
+        - nodes: np.ndarray of shape (4, 3) or (3, 3), representing the coordinates 
+                of the element nodes [n1, n2, n3, n4] or [n1, n2, n3]
+
+        Returns:
+        - x, y, z: np.ndarray (3,), local orthonormal axes expressed in the global frame.
+        """
+        
+        # For 4-node shell element
+        if nodes.shape[0] == 4: 
+            n1, n2, n3, n4 = nodes
+
+            # Midpoints 
+            m14 = 0.5 * (n1 + n4)
+            m23 = 0.5 * (n2 + n3)
+            m12 = 0.5 * (n1 + n2)
+            m34 = 0.5 * (n3 + n4)
+
+            # Natural system (isoparametric frame) vectors.
+            xi = m23 - m14
+            eta = m34 - m12
+
+            # Normalize xi and eta to compute the angle between them
+            xi_n = convert.normalize(xi)
+            eta_n = convert.normalize(eta)
+            cos_alpha = np.dot(xi_n, eta_n)
+
+            alpha = np.arccos(cos_alpha)
+
+            # local z-axis (normal to the shell surface)
+            z = np.cross(xi, eta)
+
+            # Compute x and y so that they are orthogonal, by symmetrically rotating xi and eta
+            # to form a 90° angle between them, while preserving the same angle between xi and x as between eta and y
+
+            if alpha == np.pi / 2:
+                x = xi_n
+                y = eta_n
+            else:
+                theta = (np.pi / 2 - alpha) / 2
+                x = np.cos(theta) * xi_n - np.sin(theta) * eta_n
+                y = np.cos(theta) * eta_n - np.sin(theta) * xi_n
+
+            
+        # For 3-node (triangular) shell elements
+        elif nodes.shape[0] == 3:
+            n1, n2, n3 = nodes
+
+            x = n2 - n1
+            z = np.cross(n2 - n1, n3 - n1)
+            y = np.cross(z, x)
+
+        # Normalize the resulting local basis vectors
+        x = convert.normalize(x)
+        y = convert.normalize(y)
+        z = convert.normalize(z)
+
+        return np.array([x, y, z]) 
+
+
+    @staticmethod
+    def get_rotation_matrix(local_axes_radioss):
+        """
+        Convert local axes (given as row vectors) into rotation matrices for tensor transformation.
+
+        Parameters:
+        - local_axes_radioss: array (N, 3, 3), local frames with vectors as rows
+
+        Returns:
+        - rotation_matrices: array (N, 3, 3), local frames with vectors as columns, for R · S_local · Rᵀ
+        """
+        # Transpose each frame to switch from row-wise to column-wise vectors
+
+        return np.transpose(local_axes_radioss, axes=(0, 2, 1))
+    
+
+    @staticmethod
+    def rotate_tensor(vecs , R):
+        """
+        Applies rotation to a batch of 2D stress or strain tensors,
+        considering only in-plane components (out-of-plane components are zero).
+
+        Parameters:
+        - vecs: (n, 3) array of [ox, oy, oxy] in local coordinates.
+        - R: (n, 3, 3) array of rotation matrices (local to global).
+
+        Returns:
+        - (n, 6) array of [ox, oy, oz, oxy, oyz, oxz] in global coordinates, 
+        where oz, oyz, oxz are zero.
+        """
+        n = vecs.shape[0]
+        
+        # Build local 3x3 tensors (n, 3, 3) for stress/strain in-plane
+        S_local = np.zeros((n, 3, 3))
+        S_local[:, 0, 0] = vecs[:, 0]  # ox
+        S_local[:, 1, 1] = vecs[:, 1]  # oy
+        S_local[:, 0, 1] = S_local[:, 1, 0] = vecs[:, 2]  # σxy
+
+        # Apply rotation: S_global = R @ S_local @ R.T
+        Rt = np.transpose(R, axes=(0, 2, 1))
+        S_global = np.matmul(np.matmul(R, S_local), Rt)
+
+        # Extract the components and set the out-of-plane components to zero
+        result = np.stack([
+            S_global[:, 0, 0],  # ox
+            S_global[:, 1, 1],  # oy
+            np.zeros(n),        # oz = 0 (out-of-plane)
+            S_global[:, 0, 1],  # oxy
+            np.zeros(n),         # oyz = 0 (out-of-plane)
+            np.zeros(n)          # oxz = 0 (out-of-plane)
+        ], axis=-1)
+
+        return result
+    
+    @staticmethod
     def element_shell_internal_energy(*data):
             
         # data[0] is shell energy per unit mass (Radioss units)
@@ -89,29 +214,46 @@ class convert:
     
     @staticmethod
     def element_shell_stress(*data):
-        
-        # Mid-surface stresses if present are not converted
-        # Only Upper and Lower stresses are converted 
-        # Out of plane stresses not converted
-        # Co-ordinate systems not corrected for - should be OK for Von-Mises, Tresca etc and \
-        # stress principles
-        # [σx, σy, σz, σxy, σyz, σxz]
-        
-        shell_num      = len(data[0])
-        nip            = data[2][0] 
-        
-        out            = np.zeros(shape=(shell_num, nip, 6))              
-        
-        # Top integration point
-        out[:, -1, 0]   = data[0][:, 0]
-        out[:, -1, 1]   = data[0][:, 1]
-        out[:, -1, 3]   = data[0][:, 2]
-            
-        # Bottom integration point
-        out[:, 0, 0]   = data[1][:, 0]
-        out[:, 0, 1]   = data[1][:, 1]
-        out[:, 0, 3]   = data[1][:, 2]
-        
+
+        """
+        Converts local shell stresses [ox, oy, oxy] into global stresses 
+        [ox, oy, oz, oxy, oyz, oxz] using rotation matrices and rotate_tensor.
+
+        Mid surface stresses if present are not converted
+        Only Upper and Lower stresses are converted
+        out of plane stresses arre not converted
+        """
+         
+        shell_num = len(data[0])
+        nip, rotation_matrices = data[2]
+
+        out = np.zeros((shell_num, nip, 6))
+
+        top = convert.rotate_tensor(np.array(data[0]), rotation_matrices)
+        bottom = convert.rotate_tensor(np.array(data[1]), rotation_matrices)
+
+        out[:, -1] = top  # Top integration point
+        out[:, 0] = bottom  # Bottom integration point
+
+        return out
+
+
+    @staticmethod
+    def element_shell_strain(*data):
+
+        #same as element shell stress
+
+        shell_num = len(data[0])
+        nip, rotation_matrices = data[2]
+
+        out = np.zeros((shell_num, nip, 6))
+
+        top = convert.rotate_tensor(np.array(data[0]), rotation_matrices)
+        bottom = convert.rotate_tensor(np.array(data[1]), rotation_matrices)
+
+        out[:, -1] = top  # Top point
+        out[:, 0] = bottom  # Bottom point
+
         return out
     
     @staticmethod
@@ -557,11 +699,33 @@ class readAndConvert:
                     
                     database_extent_binary[flag][0] = []
                     database_extent_binary[flag][0] = _[0] + [ArrayType.element_shell_is_alive]  
-                    database_extent_binary[flag][0] = _[0] + [ArrayType.element_shell_stress]    
+                    database_extent_binary[flag][0] = _[0] + [ArrayType.element_shell_stress] 
+                    database_extent_binary[flag][0] = _[0] + [ArrayType.element_shell_strain]   
                     database_extent_binary[flag][0] = _[0] + [ArrayType.element_shell_effective_plastic_strain]
                     
                     database_extent_binary[flag][1] = _[0] + [ArrayType.element_shell_thickness]        
-                    database_extent_binary[flag][1] = _[1] + [ArrayType.element_shell_internal_energy]                        
+                    database_extent_binary[flag][1] = _[1] + [ArrayType.element_shell_internal_energy] 
+
+
+                    node_coordinates = rr.arrays["node_coordinates"]  # shape: (n_nodes, 3)
+                    shell_node_indexes = rr.arrays["element_shell_node_indexes"]
+
+                    # Extract the node matrix per element (shape: n_elements x 4 x 3)
+                    nodes_per_elem = node_coordinates[shell_node_indexes]
+
+                    # For triangular elements, the 4th node is automatically duplicated (same as the 3rd) to maintain a (4, 3) shape.
+                    # We remove it here so that get_radioss_local_axes correctly handle triangles as 3-node elements.
+
+                    is_triangle = np.all(nodes_per_elem[:, 2, :] == nodes_per_elem[:, 3, :], axis=1)
+                    nodes_per_elem = [nodes[:3] if is_t else nodes for nodes, is_t in zip(nodes_per_elem, is_triangle)]
+
+                    #matrix containing the local x, y, z axes of each element
+                    local_axes_radioss = np.array([
+                        convert.get_radioss_local_axes(nodes) for nodes in nodes_per_elem 
+                    ])               
+                    
+                    # the rotation matrices from local to global coordinate systems for each element
+                    rotation_matrices = convert.get_rotation_matrix(local_axes_radioss)                       
                     
                     # Dyna output
                     array_requirements[ArrayType.element_shell_thickness] = {}
@@ -601,8 +765,28 @@ class readAndConvert:
                     _["shape"]          = (1,n_shell, nip_shell, 6)
                     _["convert"]        = convert.element_shell_stress
                     _["tracker"]        = shell_ids_tracker
-                    _["additional"]     = [nip_shell]
+                    _["additional"]     = [nip_shell,rotation_matrices]
+
+                    # Dyna output
+                    array_requirements[ArrayType.element_shell_strain] = {}
+                    _ = array_requirements[ArrayType.element_shell_strain]
+                    # Radioss outputs needed to comptute Dyna output
+                    _["dependents"]     = ["Strain (upper)","Strain (lower)"]
+                    _["shape"]          = (1,n_shell, nip_shell, 6)
+                    _["convert"]        = convert.element_shell_strain
+                    _["tracker"]        = shell_ids_tracker
+                    _["additional"]     = [nip_shell,rotation_matrices]
                     
+                    # Dyna output
+                    array_requirements[ArrayType.element_shell_strain] = {}
+                    _ = array_requirements[ArrayType.element_shell_strain]
+                    # Radioss outputs needed to comptute Dyna output
+                    _["dependents"]     = ["Strain (upper)","Strain (lower)"]
+                    _["shape"]          = (1,n_shell, nip_shell, 6)
+                    _["convert"]        = convert.element_shell_strain
+                    _["tracker"]        = shell_ids_tracker
+                    _["additional"]     = [nip_shell,rotation_matrices]
+
                    # Dyna output
                     array_requirements[ArrayType.element_shell_effective_plastic_strain] = {}
                     _ = array_requirements[ArrayType.element_shell_effective_plastic_strain]
