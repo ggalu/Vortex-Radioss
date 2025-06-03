@@ -133,14 +133,10 @@ class convert:
     @staticmethod
     def element_shell_stress(*data):
 
-        """
-        Converts local shell stresses [ox, oy, oxy] into global stresses 
-        [ox, oy, oz, oxy, oyz, oxz] using rotation matrices and rotate_tensor.
+        # Mid surface stresses if present are not converted
+        # Only Upper and Lower stresses are converted
+        # out of plane stresses arre not converted
 
-        Mid surface stresses if present are not converted
-        Only Upper and Lower stresses are converted
-        out of plane stresses arre not converted
-        """
          
         shell_num = len(data[0])
         nip, rotation_matrices = data[2]
@@ -150,8 +146,8 @@ class convert:
         top = convert.rotate_tensor(np.array(data[0]), rotation_matrices)
         bottom = convert.rotate_tensor(np.array(data[1]), rotation_matrices)
 
-        out[:, -1] = top  # Top integration point
-        out[:, 0] = bottom  # Bottom integration point
+        out[:, 0] = top  # Top integration point
+        out[:, -1] = bottom  # Bottom integration point
 
         return out
 
@@ -601,16 +597,24 @@ class readAndConvert:
                 database_extent_binary ={}
                 array_requirements = {}
 
-                if rr.raw_header["nbNodes"] > 0:   
-                    
-                    flag = "NODES"
-                    
-                    database_extent_binary[flag] = {}      
-                    _ = database_extent_binary[flag]
-                    
-                    database_extent_binary[flag][0] = []
-                    database_extent_binary[flag][1] = _[0] + [ArrayType.node_velocity]  
-                    database_extent_binary[flag][2] = _[1] + [ArrayType.node_acceleration]  
+                # method to populate the nested dictionary database_extent_binary`.
+                # Creates a mapping structure: top-level key → subkey → list of array types.
+                # If the key or subkey does not exist, it initializes them before appending the array types.
+
+                def insert_into_extent_binary(key, subkey, arraytypes):
+                    if key not in database_extent_binary:
+                        database_extent_binary[key] = {}
+                    if subkey not in database_extent_binary[key]:
+                        database_extent_binary[key][subkey] = []
+                    database_extent_binary[key][subkey].extend(arraytypes)
+
+
+                ##################### NODES ######################
+
+                if n_nodes > 0:   
+
+                    insert_into_extent_binary("CARD_1a", "IVEL", [ArrayType.node_velocity,])
+                    insert_into_extent_binary("CARD_1a", "STRFLG", [ArrayType.node_acceleration,]) 
                     
                     # Dyna output
                     array_requirements[ArrayType.node_velocity] = {}
@@ -631,24 +635,26 @@ class readAndConvert:
                     _["convert"]        = None
                     _["tracker"]        = node_ids_tracker
                     _["additional"]     = []
+
                 
-                if rr.raw_header["nbFacets"] > 0:   
+                ##################### SHELLS ######################
+                
+                if n_shell > 0:   
                     
-                    flag = "SHELLS"
+                    insert_into_extent_binary("CARD_1b", "DEFAULT", [ArrayType.element_shell_is_alive,])
+                    insert_into_extent_binary("CARD_1b", "STRFLG", [ArrayType.element_shell_strain,])
+                    insert_into_extent_binary("CARD_1b", "SIGFLG", [ArrayType.element_shell_stress,]) 
 
-                    database_extent_binary[flag] = {}      
-                    _ = database_extent_binary[flag]
-                    
-                    # [0] are essential arrays and need creating even if no data available
-                    
-                    database_extent_binary[flag][0] = []
-                    database_extent_binary[flag][0] = _[0] + [ArrayType.element_shell_is_alive]  
-                    database_extent_binary[flag][0] = _[0] + [ArrayType.element_shell_stress] 
-                    database_extent_binary[flag][0] = _[0] + [ArrayType.element_shell_effective_plastic_strain]
-                    
-                    database_extent_binary[flag][1] = _[0] + [ArrayType.element_shell_thickness]        
-                    database_extent_binary[flag][1] = _[1] + [ArrayType.element_shell_internal_energy] 
+                    insert_into_extent_binary("CARD_1b", "EPSFLG", [ArrayType.element_shell_effective_plastic_strain,])
 
+                    insert_into_extent_binary("CARD_1b", "ENGFLG", [
+                        ArrayType.element_shell_thickness,
+                        ArrayType.element_shell_internal_energy,
+                    ])
+
+
+                    # Part masses for shells      
+                    insert_into_extent_binary("CARD_1b", "PARTS", [ArrayType.part_mass,])
 
 
                     # WEE need to Computes the local Radioss coordinate system (x, y, z) and express it in the global system,
@@ -774,17 +780,6 @@ class readAndConvert:
                     _["tracker"]        = shell_ids_tracker  
                     _["additional"]     = [nip_shell]
 
-
-                flag = "STRFLG"
-
-                database_extent_binary[flag] = {}      
-                _ = database_extent_binary[flag]
-                
-                database_extent_binary[flag][0] = []
-
-                if n_shell > 0:
-                    database_extent_binary[flag][0] += [ArrayType.element_shell_strain]
-
                     # Dyna output
                     array_requirements[ArrayType.element_shell_strain] = {}
                     _ = array_requirements[ArrayType.element_shell_strain]
@@ -795,8 +790,31 @@ class readAndConvert:
                     _["tracker"]        = shell_ids_tracker
                     _["additional"]     = [nip_shell,rotation_matrices]
 
+                    array_requirements[ArrayType.part_mass] = {}
+                    _ = array_requirements[ArrayType.part_mass]
+                    _["dependents"]     = ["node_coordinates","element_shell_node_indexes","element_shell_thickness",\
+                                           "element_shell_density","element_shell_part_indexes", "element_shell_is_alive"]
+                    _["shape"]          = (1, n_parts)
+                    _["convert"]        = convert.part_shell_mass
+                    _["tracker"]        = part_ids_tracker     
+                    _["additional"]     = [n_parts]
+
+                ##################### SOLIDS ######################
+
                 if n_solids > 0:
-                    database_extent_binary[flag][0] += [ArrayType.element_solid_strain]
+                    insert_into_extent_binary("CARD_1b", "DEFAULT", [ArrayType.element_solid_is_alive,])
+                    insert_into_extent_binary("CARD_1b", "STRFLG", [ArrayType.element_solid_strain,]) 
+                    insert_into_extent_binary("CARD_1b", "SIGFLG", [ArrayType.element_solid_stress,])
+
+                    # Dyna output
+                    array_requirements[ArrayType.element_solid_is_alive] = {}
+                    _ = array_requirements[ArrayType.element_solid_is_alive]
+                    # Radioss outputs needed to compute Dyna output
+                    _["dependents"]     = ["element_solid_is_alive"]
+                    _["shape"]          = (1,n_solids)
+                    _["convert"]        = None
+                    _["tracker"]        = solid_ids_tracker
+                    _["additional"]     = []
 
                     # Dyna output
                     array_requirements[ArrayType.element_solid_strain] = {}
@@ -807,38 +825,45 @@ class readAndConvert:
                     _["tracker"] = solid_ids_tracker
                     _["additional"] = [nip_solid] 
 
-                
-                
-                # Part masses for shells      
-                if rr.raw_header["nbEFunc"] > 0: 
+                    # Dyna output
+                    array_requirements[ArrayType.element_solid_stress] = {}
+                    _ = array_requirements[ArrayType.element_solid_stress]
+                    _["dependents"] = ["element_solid_stress"]
+                    _["shape"] = (1, n_solids, nip_solid, 6) 
+                    _["convert"] = convert.element_solid_stress
+                    _["tracker"] = solid_ids_tracker
+                    _["additional"] = [nip_solid]
 
-                    flag = "PARTS"
-                    
-                    database_extent_binary[flag] = {}      
-                    _ = database_extent_binary[flag]
-                    
-                    database_extent_binary[flag][0] = []
-                    database_extent_binary[flag][0] = _[0] + [ArrayType.part_mass]   
-                    
-                    array_requirements[ArrayType.part_mass] = {}
-                    _ = array_requirements[ArrayType.part_mass]
-                    
-                    _["dependents"]     = ["node_coordinates","element_shell_node_indexes","element_shell_thickness",\
-                                           "element_shell_density","element_shell_part_indexes", "element_shell_is_alive"]
-                    _["shape"]          = (1, n_parts)
-                    _["convert"]        = convert.part_shell_mass
-                    _["tracker"]        = part_ids_tracker     
-                    _["additional"]     = [n_parts]
+
                     
             "Assign the arrays to the D3PLOT class for writing"
                         
             "Generate the availability check"
-            
+
             dependency_check = {}
             flag_max        =  {}
 
+            # ---- Context: previous logic ----
+            # Previously, for each flag ("NODES", "ELEMENTS", etc.), we stored the highest group index (e.g., 0, 1, 2…)
+            # for which all dependencies were available.
+
+            # ---- New logic ----
+            # Now, each flag (e.g., "STRFLG", "ENGFLG") appears only once in database_extent_binary,
+            # so we no longer need to track the maximum valid group.
+            # We keep flag_max as a set of valid groups, no longer as a threshold.
+
+            # ---- Phase 1: collection ----
+            # For each top-level flag ("CARD_1a", "CARD_1b", etc.), we inspect its array groups (e.g., "STRFLG", "ENGFLG")
+            # and evaluate whether each output array is computable based on dependency availability.
+            # flag_max simply stores the set of usable groups.
+
+            # ---- Phase 2: generation ----
+            # We loop over database_extent_binary again;
+            # if dependency_check[field] is True, we compute or copy the data,
+            # otherwise, we write a zero array with the appropriate shape.
+
             for flag in database_extent_binary:
-                flag_max[flag] = -float('inf')
+                flag_max[flag] = set()
                 _ = database_extent_binary[flag]
                 for array_group in _:
                     __ = _[array_group]
@@ -853,7 +878,7 @@ class readAndConvert:
                     
                         dependency_check[array_output] = all_dependents_exist
                         if all_dependents_exist:
-                            flag_max[flag] = max(flag_max[flag],array_group) 
+                            flag_max[flag].add(array_group) 
             
             "Generate the output arrays"
   
@@ -862,7 +887,7 @@ class readAndConvert:
                 for array_group in _:
                     __ = _[array_group]
                     
-                    if array_group <= flag_max[flag]:
+                    if array_group in flag_max[flag]:
                         for array_output in __:
                             if dependency_check[array_output]:
                                 conversion_function = array_requirements[array_output]["convert"]
