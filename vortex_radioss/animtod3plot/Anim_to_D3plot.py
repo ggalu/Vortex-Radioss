@@ -111,10 +111,10 @@ class convert:
         result = np.stack([
             S_global[:, 0, 0],  # ox
             S_global[:, 1, 1],  # oy
-            np.zeros(n),        # oz = 0 (out-of-plane)
+            S_global[:, 2, 2],   # oz 
             S_global[:, 0, 1],  # oxy
-            np.zeros(n),         # oyz = 0 (out-of-plane)
-            np.zeros(n)          # oxz = 0 (out-of-plane)
+            S_global[:, 1, 2],   # oyz
+            S_global[:, 0, 2],   # oxz 
         ], axis=-1)
 
         return result
@@ -136,8 +136,7 @@ class convert:
         # Mid surface stresses if present are not converted
         # Only Upper and Lower stresses are converted
         # out of plane stresses arre not converted
-
-         
+        
         shell_num = len(data[0])
         nip, rotation_matrices = data[2]
 
