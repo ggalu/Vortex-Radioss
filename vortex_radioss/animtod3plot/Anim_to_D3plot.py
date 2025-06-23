@@ -54,7 +54,7 @@ class convert:
         n4      = node_coordinates[shell_node_indexes][:,3]      
         ux      = n1[:,0] - n3[:,0]; uy = n1[:,1] - n3[:,1]; uz = n1[:,2] - n3[:,2]
         vx      = n4[:,0] - n2[:,0]; vy = n4[:,1] - n2[:,1]; vz = n4[:,2] - n2[:,2]        
-        i       = uy*vz - uz*vy; j = uz*vx - ux*vz; k = ux*vy - uy*vx;
+        i       = uy*vz - uz*vy; j = uz*vx - ux*vz; k = ux*vy - uy*vx
         area    = np.sqrt((i*i)+(j*j)+(k*k))*0.5
         mass    = area * shell_thicknesses * shell_densities * shell_is_alive                     
         _       = np.bincount(shell_part_indexes, mass, minlength = n_parts)        
@@ -75,6 +75,49 @@ class convert:
         print(data1)
         print(data2)
         return sum(data1) + sum(data2)
+
+    @staticmethod
+    def normalize(v):
+        norm = np.linalg.norm(v, axis=1, keepdims=True)
+        return np.divide(v, norm, where=norm != 0, out=np.zeros_like(v))
+
+    @staticmethod
+    def rotate_tensor(vecs , R):
+        """
+        Applies rotation to a batch of 2D stress or strain tensors,
+        considering only in-plane components (out-of-plane components are zero).
+
+        Parameters:
+        - vecs: (n, 3) array of [ox, oy, oxy] in local coordinates.
+        - R: (n, 3, 3) array of rotation matrices (local to global).
+
+        Returns:
+        - (n, 6) array of [ox, oy, oz, oxy, oyz, oxz] in global coordinates, 
+        where oz, oyz, oxz are zero.
+        """
+        n = vecs.shape[0]
+        
+        # Build local 3x3 tensors (n, 3, 3) for stress/strain in-plane
+        S_local = np.zeros((n, 3, 3))
+        S_local[:, 0, 0] = vecs[:, 0]  # ox
+        S_local[:, 1, 1] = vecs[:, 1]  # oy
+        S_local[:, 0, 1] = S_local[:, 1, 0] = vecs[:, 2]  # σxy
+
+        # Apply rotation: S_global = R @ S_local @ R.T
+        Rt = np.transpose(R, axes=(0, 2, 1))
+        S_global = np.matmul(np.matmul(R, S_local), Rt)
+
+        # Extract the components and set the out-of-plane components to zero
+        result = np.stack([
+            S_global[:, 0, 0],  # ox
+            S_global[:, 1, 1],  # oy
+            S_global[:, 2, 2],   # oz 
+            S_global[:, 0, 1],  # oxy
+            S_global[:, 1, 2],   # oyz
+            S_global[:, 0, 2],   # oxz 
+        ], axis=-1)
+
+        return result
     
     @staticmethod
     def element_shell_internal_energy(*data):
@@ -89,29 +132,41 @@ class convert:
     
     @staticmethod
     def element_shell_stress(*data):
+
+        # Mid surface stresses if present are not converted
+        # Only Upper and Lower stresses are converted
+        # out of plane stresses arre not converted
         
-        # Mid-surface stresses if present are not converted
-        # Only Upper and Lower stresses are converted 
-        # Out of plane stresses not converted
-        # Co-ordinate systems not corrected for - should be OK for Von-Mises, Tresca etc and \
-        # stress principles
-        # [σx, σy, σz, σxy, σyz, σxz]
-        
-        shell_num      = len(data[0])
-        nip            = data[2][0] 
-        
-        out            = np.zeros(shape=(shell_num, nip, 6))              
-        
-        # Top integration point
-        out[:, -1, 0]   = data[0][:, 0]
-        out[:, -1, 1]   = data[0][:, 1]
-        out[:, -1, 3]   = data[0][:, 2]
-            
-        # Bottom integration point
-        out[:, 0, 0]   = data[1][:, 0]
-        out[:, 0, 1]   = data[1][:, 1]
-        out[:, 0, 3]   = data[1][:, 2]
-        
+        shell_num = len(data[0])
+        nip, rotation_matrices = data[2]
+
+        out = np.zeros((shell_num, nip, 6))
+
+        top = convert.rotate_tensor(np.array(data[0]), rotation_matrices)
+        bottom = convert.rotate_tensor(np.array(data[1]), rotation_matrices)
+
+        out[:, 0] = top  # Top integration point
+        out[:, -1] = bottom  # Bottom integration point
+
+        return out
+
+
+    @staticmethod
+    def element_shell_strain(*data):
+
+        #same as element shell stress
+
+        shell_num = len(data[0])
+        nip, rotation_matrices = data[2]
+
+        out = np.zeros((shell_num, nip, 6))
+
+        top = convert.rotate_tensor(np.array(data[0]), rotation_matrices)
+        bottom = convert.rotate_tensor(np.array(data[1]), rotation_matrices)
+
+        out[:, -1] = top  # Top point
+        out[:, 0] = bottom  # Bottom point
+
         return out
     
     @staticmethod
@@ -132,8 +187,27 @@ class convert:
         # Bottom integration point
         out[:, 0]    = data[1]
         
-        return out    
-                
+        return out  
+
+    @staticmethod
+    def element_solid_stress(*data):
+        # Input strain data has shape (n_solids, 6), but D3plot expects (n_solids, nip_solid, 6)
+        solid_num = len(data[0]) 
+        nip = data[1][0]      #Number of integration points (nip_solid)
+        out = np.zeros((solid_num, nip, 6)) 
+        out[:, 0, :] = data[0]  
+        return out
+    
+    @staticmethod
+    def element_solid_strain(*data):
+        #same as element solid stress
+
+        solid_num      = len(data[0]) 
+        nip = data[1][0]  
+        out = np.zeros((solid_num, nip, 6)) 
+        out[:, 0, :] = data[0]
+        return out
+    
 class readAndConvert:
     
     def __init__(
@@ -258,9 +332,16 @@ class readAndConvert:
         "We sort the ids into ascending order and generate a mapping function for the scalar and tensor data"
 
         n_nodes = rr.raw_header["nbNodes"]
-        
-        n_shell = 0
+        n_shell = rr.raw_header["nbFacets"]
+        n_solids = rr.raw_header["nbEFunc3D"]
+
         nip_shell = 2
+
+        nip_solid = 1   # Number of integration points per solid element (NIP). 
+                        # This value should be either 1 or 8, depending on the model configuration. 
+                        # However, when the model uses 8 integration points, the solver currently 
+                        # provides the average value instead of individual data points.
+
         allowable_part_strings = ["_rigid_wall_",  ": RIGIDWALL_"]
         if rr.raw_header["nbFacets"] > 0:
              
@@ -515,16 +596,24 @@ class readAndConvert:
                 database_extent_binary ={}
                 array_requirements = {}
 
-                if rr.raw_header["nbNodes"] > 0:   
-                    
-                    flag = "NODES"
-                    
-                    database_extent_binary[flag] = {}      
-                    _ = database_extent_binary[flag]
-                    
-                    database_extent_binary[flag][0] = []
-                    database_extent_binary[flag][1] = _[0] + [ArrayType.node_velocity]  
-                    database_extent_binary[flag][2] = _[1] + [ArrayType.node_acceleration]  
+                # method to populate the nested dictionary database_extent_binary`.
+                # Creates a mapping structure: top-level key → subkey → list of array types.
+                # If the key or subkey does not exist, it initializes them before appending the array types.
+
+                def insert_into_extent_binary(key, subkey, arraytypes):
+                    if key not in database_extent_binary:
+                        database_extent_binary[key] = {}
+                    if subkey not in database_extent_binary[key]:
+                        database_extent_binary[key][subkey] = []
+                    database_extent_binary[key][subkey].extend(arraytypes)
+
+
+                ##################### NODES ######################
+
+                if n_nodes > 0:   
+
+                    insert_into_extent_binary("CARD_1a", "IVEL", [ArrayType.node_velocity,])
+                    insert_into_extent_binary("CARD_1a", "STRFLG", [ArrayType.node_acceleration,]) 
                     
                     # Dyna output
                     array_requirements[ArrayType.node_velocity] = {}
@@ -545,23 +634,100 @@ class readAndConvert:
                     _["convert"]        = None
                     _["tracker"]        = node_ids_tracker
                     _["additional"]     = []
+
                 
-                if rr.raw_header["nbEFunc"] > 0:   
+                ##################### SHELLS ######################
+                
+                if n_shell > 0:   
                     
-                    flag = "SHELLS"
-                    
-                    database_extent_binary[flag] = {}      
-                    _ = database_extent_binary[flag]
-                    
-                    # [0] are essential arrays and need creating even if no data available
-                    
-                    database_extent_binary[flag][0] = []
-                    database_extent_binary[flag][0] = _[0] + [ArrayType.element_shell_is_alive]  
-                    database_extent_binary[flag][0] = _[0] + [ArrayType.element_shell_stress]    
-                    database_extent_binary[flag][0] = _[0] + [ArrayType.element_shell_effective_plastic_strain]
-                    
-                    database_extent_binary[flag][1] = _[0] + [ArrayType.element_shell_thickness]        
-                    database_extent_binary[flag][1] = _[1] + [ArrayType.element_shell_internal_energy]                        
+                    insert_into_extent_binary("CARD_1b", "DEFAULT", [ArrayType.element_shell_is_alive,])
+                    insert_into_extent_binary("CARD_1b", "STRFLG", [ArrayType.element_shell_strain,])
+                    insert_into_extent_binary("CARD_1b", "SIGFLG", [ArrayType.element_shell_stress,]) 
+
+                    insert_into_extent_binary("CARD_1b", "EPSFLG", [ArrayType.element_shell_effective_plastic_strain,])
+
+                    insert_into_extent_binary("CARD_1b", "ENGFLG", [
+                        ArrayType.element_shell_thickness,
+                        ArrayType.element_shell_internal_energy,
+                    ])
+
+
+                    # Part masses for shells      
+                    insert_into_extent_binary("CARD_1b", "PARTS", [ArrayType.part_mass,])
+
+
+                    # WEE need to Computes the local Radioss coordinate system (x, y, z) and express it in the global system,
+                    # based on the node coordinates of a shell element.
+
+                    node_coordinates = rr.arrays["node_coordinates"]  # shape: (n_nodes, 3)
+                    shell_node_indexes = rr.arrays["element_shell_node_indexes"]
+
+                    # Extract the node matrix per element (shape: n_elements x 4 x 3)
+                    nodes_per_elem = node_coordinates[shell_node_indexes]
+
+                    # For triangular elements, the 4th node is automatically duplicated (same as the 3rd) to maintain a (4, 3) shape.
+                    # We remove it here so that get_radioss_local_axes correctly handle triangles as 3-node elements.
+
+                    is_triangle = np.all(nodes_per_elem[:, 2, :] == nodes_per_elem[:, 3, :], axis=1)
+
+                    # Separate the triangles and quadrilaterals
+                    triangles = nodes_per_elem[is_triangle, :3]  # shape (n_tri, 3, 3)
+                    quads = nodes_per_elem[~is_triangle]         # shape (n_quad, 4, 3)
+
+                    local_axes = np.zeros((nodes_per_elem.shape[0], 3, 3))  # (n_elem, 3, 3)
+
+                    # --- Vectorization for TRIANGLES ---
+                    if triangles.shape[0] > 0:
+                        n1, n2, n3 = triangles[:, 0], triangles[:, 1], triangles[:, 2]
+                        x = n2 - n1
+                        z = np.cross(n2 - n1, n3 - n1)
+                        y = np.cross(z, x)
+
+                        # Normalize the resulting local basis vectors
+                        x = convert.normalize(x)
+                        y = convert.normalize(y)
+                        z = convert.normalize(z)
+
+                        local_axes[is_triangle] = np.stack([x, y, z], axis=1)
+
+                    # --- Vectorization for 4 Nodes elements ---
+                    if quads.shape[0] > 0:
+                        n1, n2, n3, n4 = quads[:, 0], quads[:, 1], quads[:, 2], quads[:, 3]
+
+                        m14 = 0.5 * (n1 + n4)
+                        m23 = 0.5 * (n2 + n3)
+                        m12 = 0.5 * (n1 + n2)
+                        m34 = 0.5 * (n3 + n4)
+
+                        # Natural system (isoparametric frame) vectors.
+                        xi = m23 - m14
+                        eta = m34 - m12
+
+                        # Normalize xi and eta to compute the angle between them
+                        xi_n = convert.normalize(xi) 
+                        eta_n = convert.normalize(eta)
+                        cos_alpha = np.einsum('ij,ij->i', xi_n, eta_n)
+                        alpha = np.arccos(np.clip(cos_alpha, -1.0, 1.0))
+                        
+                        # local z-axis (normal to the shell surface)
+                        z = np.cross(xi, eta)
+                        z = convert.normalize(z)
+
+                        theta = (np.pi / 2 - alpha) / 2
+                        theta = theta[:, None]
+
+                        # Compute x and y so that they are orthogonal, by symmetrically rotating xi and eta
+                        # to form a 90° angle between them, while preserving the same angle between xi and x as between eta and y 
+                        x = np.cos(theta) * xi_n - np.sin(theta) * eta_n
+                        y = np.cos(theta) * eta_n - np.sin(theta) * xi_n
+
+                        # Normaliser x et y
+                        x = convert.normalize(x)
+                        y = convert.normalize(y)
+
+                        local_axes[~is_triangle] = np.stack([x, y, z], axis=1)
+
+                    rotation_matrices = np.transpose(local_axes, axes=(0, 2, 1))
                     
                     # Dyna output
                     array_requirements[ArrayType.element_shell_thickness] = {}
@@ -601,8 +767,8 @@ class readAndConvert:
                     _["shape"]          = (1,n_shell, nip_shell, 6)
                     _["convert"]        = convert.element_shell_stress
                     _["tracker"]        = shell_ids_tracker
-                    _["additional"]     = [nip_shell]
-                    
+                    _["additional"]     = [nip_shell,rotation_matrices]
+
                    # Dyna output
                     array_requirements[ArrayType.element_shell_effective_plastic_strain] = {}
                     _ = array_requirements[ArrayType.element_shell_effective_plastic_strain]
@@ -612,37 +778,91 @@ class readAndConvert:
                     _["convert"]        = convert.element_shell_effective_plastic_strain
                     _["tracker"]        = shell_ids_tracker  
                     _["additional"]     = [nip_shell]
-                   
-                flag = "PARTS"
-                
-                database_extent_binary[flag] = {}      
-                _ = database_extent_binary[flag]
-                
-                # Part masses for shells      
-                if rr.raw_header["nbEFunc"] > 0: 
-                    
-                    database_extent_binary[flag][0] = []
-                    database_extent_binary[flag][0] = _[0] + [ArrayType.part_mass]   
-                    
+
+                    # Dyna output
+                    array_requirements[ArrayType.element_shell_strain] = {}
+                    _ = array_requirements[ArrayType.element_shell_strain]
+                    # Radioss outputs needed to comptute Dyna output
+                    _["dependents"]     = ["Strain (upper)","Strain (lower)"]
+                    _["shape"]          = (1,n_shell, nip_shell, 6)
+                    _["convert"]        = convert.element_shell_strain
+                    _["tracker"]        = shell_ids_tracker
+                    _["additional"]     = [nip_shell,rotation_matrices]
+
                     array_requirements[ArrayType.part_mass] = {}
                     _ = array_requirements[ArrayType.part_mass]
-                    
                     _["dependents"]     = ["node_coordinates","element_shell_node_indexes","element_shell_thickness",\
                                            "element_shell_density","element_shell_part_indexes", "element_shell_is_alive"]
                     _["shape"]          = (1, n_parts)
                     _["convert"]        = convert.part_shell_mass
                     _["tracker"]        = part_ids_tracker     
                     _["additional"]     = [n_parts]
+
+                ##################### SOLIDS ######################
+
+                if n_solids > 0:
+                    insert_into_extent_binary("CARD_1b", "DEFAULT", [ArrayType.element_solid_is_alive,])
+                    insert_into_extent_binary("CARD_1b", "STRFLG", [ArrayType.element_solid_strain,]) 
+                    insert_into_extent_binary("CARD_1b", "SIGFLG", [ArrayType.element_solid_stress,])
+
+                    # Dyna output
+                    array_requirements[ArrayType.element_solid_is_alive] = {}
+                    _ = array_requirements[ArrayType.element_solid_is_alive]
+                    # Radioss outputs needed to compute Dyna output
+                    _["dependents"]     = ["element_solid_is_alive"]
+                    _["shape"]          = (1,n_solids)
+                    _["convert"]        = None
+                    _["tracker"]        = solid_ids_tracker
+                    _["additional"]     = []
+
+                    # Dyna output
+                    array_requirements[ArrayType.element_solid_strain] = {}
+                    _ = array_requirements[ArrayType.element_solid_strain]
+                    _["dependents"] = ["element_solid_strain"]
+                    _["shape"] = (1, n_solids, nip_solid, 6) 
+                    _["convert"] = convert.element_solid_strain
+                    _["tracker"] = solid_ids_tracker
+                    _["additional"] = [nip_solid] 
+
+                    # Dyna output
+                    array_requirements[ArrayType.element_solid_stress] = {}
+                    _ = array_requirements[ArrayType.element_solid_stress]
+                    _["dependents"] = ["element_solid_stress"]
+                    _["shape"] = (1, n_solids, nip_solid, 6) 
+                    _["convert"] = convert.element_solid_stress
+                    _["tracker"] = solid_ids_tracker
+                    _["additional"] = [nip_solid]
+
+
                     
             "Assign the arrays to the D3PLOT class for writing"
                         
             "Generate the availability check"
-            
+
             dependency_check = {}
             flag_max        =  {}
 
+            # ---- Context: previous logic ----
+            # Previously, for each flag ("NODES", "ELEMENTS", etc.), we stored the highest group index (e.g., 0, 1, 2…)
+            # for which all dependencies were available.
+
+            # ---- New logic ----
+            # Now, each flag (e.g., "STRFLG", "ENGFLG") appears only once in database_extent_binary,
+            # so we no longer need to track the maximum valid group.
+            # We keep flag_max as a set of valid groups, no longer as a threshold.
+
+            # ---- Phase 1: collection ----
+            # For each top-level flag ("CARD_1a", "CARD_1b", etc.), we inspect its array groups (e.g., "STRFLG", "ENGFLG")
+            # and evaluate whether each output array is computable based on dependency availability.
+            # flag_max simply stores the set of usable groups.
+
+            # ---- Phase 2: generation ----
+            # We loop over database_extent_binary again;
+            # if dependency_check[field] is True, we compute or copy the data,
+            # otherwise, we write a zero array with the appropriate shape.
+
             for flag in database_extent_binary:
-                flag_max[flag] = -float('inf')
+                flag_max[flag] = set()
                 _ = database_extent_binary[flag]
                 for array_group in _:
                     __ = _[array_group]
@@ -657,7 +877,7 @@ class readAndConvert:
                     
                         dependency_check[array_output] = all_dependents_exist
                         if all_dependents_exist:
-                            flag_max[flag] = max(flag_max[flag],array_group) 
+                            flag_max[flag].add(array_group) 
             
             "Generate the output arrays"
   
@@ -666,7 +886,7 @@ class readAndConvert:
                 for array_group in _:
                     __ = _[array_group]
                     
-                    if array_group <= flag_max[flag]:
+                    if array_group in flag_max[flag]:
                         for array_output in __:
                             if dependency_check[array_output]:
                                 conversion_function = array_requirements[array_output]["convert"]
