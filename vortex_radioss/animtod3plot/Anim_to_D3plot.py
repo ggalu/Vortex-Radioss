@@ -333,7 +333,7 @@ class readAndConvert:
 
         n_nodes = rr.raw_header["nbNodes"]
         n_shell = rr.raw_header["nbFacets"]
-        n_solids = rr.raw_header["nbEFunc3D"]
+        n_solids = rr.raw_header["nbElts3D"]
 
         nip_shell = 2
 
@@ -804,6 +804,7 @@ class readAndConvert:
                     insert_into_extent_binary("CARD_1b", "DEFAULT", [ArrayType.element_solid_is_alive,])
                     insert_into_extent_binary("CARD_1b", "STRFLG", [ArrayType.element_solid_strain,]) 
                     insert_into_extent_binary("CARD_1b", "SIGFLG", [ArrayType.element_solid_stress,])
+                    insert_into_extent_binary("CARD_1b", "EPSFLG", [ArrayType.element_solid_effective_plastic_strain,])
 
                     # Dyna output
                     array_requirements[ArrayType.element_solid_is_alive] = {}
@@ -832,6 +833,15 @@ class readAndConvert:
                     _["convert"] = convert.element_solid_stress
                     _["tracker"] = solid_ids_tracker
                     _["additional"] = [nip_solid]
+
+                    # Dyna output
+                    array_requirements[ArrayType.element_solid_effective_plastic_strain] = {}
+                    _ = array_requirements[ArrayType.element_solid_effective_plastic_strain]
+                    _["dependents"] = ["PLACEHOLDER"]
+                    _["shape"] = (1,  n_solids, nip_solid)
+                    _["convert"] = None
+                    _["tracker"] = solid_ids_tracker
+                    _["additional"] = [nip_solid]                    
 
 
                     
