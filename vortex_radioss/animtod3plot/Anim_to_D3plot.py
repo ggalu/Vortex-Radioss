@@ -738,6 +738,7 @@ class readAndConvert:
                     _["convert"]        = None
                     _["tracker"]        = shell_ids_tracker
                     _["additional"]     = []
+                    _["essential"]      = True
                     
                     # Dyna output
                     array_requirements[ArrayType.element_shell_is_alive] = {}
@@ -758,6 +759,7 @@ class readAndConvert:
                     _["convert"]        = convert.element_shell_internal_energy
                     _["tracker"]        = shell_ids_tracker
                     _["additional"]     = []
+                    _["essential"]      = True
                     
                    # Dyna output
                     array_requirements[ArrayType.element_shell_stress] = {}
@@ -888,6 +890,9 @@ class readAndConvert:
                         dependency_check[array_output] = all_dependents_exist
                         if all_dependents_exist:
                             flag_max[flag].add(array_group) 
+                        if "essential" in array_requirements[array_output]:
+                            if array_requirements[array_output]["essential"]:
+                                flag_max[flag].add(array_group)                            
             
             "Generate the output arrays"
   
