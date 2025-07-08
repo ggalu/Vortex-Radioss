@@ -380,6 +380,10 @@ class readAndConvert:
             
             solid_ids_tracker = readAndConvert.generate_sorter(readAndConvert.sequential(rr.arrays["element_solid_ids"]))
             element_solid_ids_out   =   readAndConvert.apply_sorter(readAndConvert.sequential(rr.arrays["element_solid_ids"]), solid_ids_tracker)
+
+        if rr.raw_header["nbEltsSPH"] > 0:
+            sph_ids_tracker = readAndConvert.generate_sorter(readAndConvert.sequential(rr.arrays["element_sph_ids"]))
+            element_sph_ids_out   =   readAndConvert.apply_sorter(readAndConvert.sequential(rr.arrays["element_sph_ids"]), sph_ids_tracker)
                
         _                                                           = readAndConvert.sequential(rr.arrays["node_ids"])
         node_ids_tracker                                            = readAndConvert.generate_sorter(_)                
@@ -416,11 +420,11 @@ class readAndConvert:
                         element_solid_node_indexes[i_solid] = __
             solid_part_ids                                       =  np.array(rr.raw_arrays["pText3DA"]).astype("U9").astype(int)
             solid_part_names                                     =  np.char.strip(np.array(list(np.char.split(rr.raw_arrays["pText3DA"], sep=":")))[:,1])
-        
+            solid_part_num                                       = len(solid_part_ids)
         else:
             solid_part_ids                                      =   []             
             solid_part_names                                    =   []   
-                        
+            solid_part_num                                      =   0            
         if rr.raw_header["nbElts1D"] > 0: 
            
             additional_beam_number                                      = rr.raw_header["nbElts1D"] - len(rr.arrays["element_beam_part_indexes"])
@@ -445,14 +449,22 @@ class readAndConvert:
             beam_part_ids                                       =   []
             beam_part_names                                     =   []
             beam_part_num                                       =   0              
-                              
+            
+        if rr.raw_header["nbEltsSPH"] > 0:
+            sph_part_ids                                        =   np.array(rr.raw_arrays["pTextSPH"]).astype("U9").astype(int)
+            sph_part_names                                      =   np.char.strip(np.array(list(np.char.split(rr.raw_arrays["pTextSPH"], sep=":", maxsplit=1)))[:,1]) 
+            
+        else:
+            sph_part_ids                                        =   []
+            sph_part_names                                      =   []
+
 # Generate Part trackers
 
         # Gather all part ids
-        _                                                           = np.concatenate([shell_part_ids, beam_part_ids, solid_part_ids])
+        _                                                           = np.concatenate([shell_part_ids, beam_part_ids, solid_part_ids, sph_part_ids]) 
 
         # Gather all part names 
-        __                                                          = np.concatenate([shell_part_names, beam_part_names, solid_part_names])        
+        __                                                          = np.concatenate([shell_part_names, beam_part_names, solid_part_names, sph_part_names])        
         # Set all parts with invalid names' PIDS to zero
         
         ____ = np.array([])
@@ -486,6 +498,11 @@ class readAndConvert:
         if rr.raw_header["nbElts3D"] > 0:
             _____   = readAndConvert.apply_sorter(rr.arrays["element_solid_part_indexes"], solid_ids_tracker) + shell_part_num + beam_part_num           
             sum_elements_by_part = sum_elements_by_part + np.bincount(_____, np.ones(len(_____)), minlength = len(sum_elements_by_part))      
+ 
+        if rr.raw_header["nbEltsSPH"] > 0:
+            _____   = readAndConvert.apply_sorter(rr.arrays["element_sph_part_indexes"].astype(int), sph_ids_tracker) + shell_part_num + beam_part_num + solid_part_num
+            sum_elements_by_part = sum_elements_by_part + np.bincount(_____, np.ones(len(_____)), minlength = len(sum_elements_by_part))
+
         sum_elements_by_part = readAndConvert.apply_sorter(sum_elements_by_part, _part_ids_tracker).astype(int)
         
         # Any parts that have zero elements are removed
@@ -548,7 +565,12 @@ class readAndConvert:
             self._d3plot.arrays[ArrayType.element_solid_part_indexes]   = inverted_part_ids_tracker[_]   
             self._d3plot.arrays[ArrayType.element_solid_ids]            = element_solid_ids_out.astype(int)  
             self._d3plot.arrays[ArrayType.element_solid_node_indexes]   = inverted_node_ids_tracker[readAndConvert.apply_sorter(element_solid_node_indexes, solid_ids_tracker)]
-            
+
+        if rr.raw_header["nbEltsSPH"] > 0:
+            _ = readAndConvert.apply_sorter(rr.arrays["element_sph_part_indexes"], sph_ids_tracker) + shell_part_num + beam_part_num + solid_part_num
+            self._d3plot.arrays[ArrayType.sph_node_indexes]             = inverted_node_ids_tracker[readAndConvert.apply_sorter(rr.arrays["sph_node_indexes"].astype(int), sph_ids_tracker).astype(int)]
+            self._d3plot.arrays[ArrayType.sph_node_material_index] = np.ones(len(rr.arrays["sph_node_indexes"]))*rr.raw_arrays["matPartSPH"].astype(int)
+
         self.LOGGER("Processing states", silent)
         
         for ifile, file in enumerate(tqdm(file_list, disable = silent)):            
@@ -587,7 +609,13 @@ class readAndConvert:
                 element_solid_is_alive                                      = []
                 element_solid_is_alive.append(readAndConvert.apply_sorter(rr.arrays["element_solid_is_alive"], solid_ids_tracker))
                 self._d3plot.arrays[ArrayType.element_solid_is_alive]       = np.array(element_solid_is_alive).astype("<f")                         
-            
+
+            "SPH"
+            if rr.raw_header["nbEltsSPH"] > 0: 
+                sph_is_alive                                        = []
+                sph_is_alive.append(readAndConvert.apply_sorter(rr.arrays["sph_is_alive"], sph_ids_tracker))
+                self._d3plot.arrays[ArrayType.sph_is_alive]         = np.array(sph_is_alive).astype("<f")                   
+
             "Global"
             self._d3plot.arrays[ArrayType.global_timesteps]             = np.array(timesteps)
                                                            
@@ -832,7 +860,6 @@ class readAndConvert:
                     _["convert"] = convert.element_solid_stress
                     _["tracker"] = solid_ids_tracker
                     _["additional"] = [nip_solid]
-
 
                     
             "Assign the arrays to the D3PLOT class for writing"
