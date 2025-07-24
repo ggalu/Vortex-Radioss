@@ -333,7 +333,7 @@ class readAndConvert:
 
         n_nodes = rr.raw_header["nbNodes"]
         n_shell = rr.raw_header["nbFacets"]
-        n_solids = rr.raw_header["nbEFunc3D"]
+        n_solids = rr.raw_header["nbElts3D"]
 
         nip_shell = 2
 
@@ -766,6 +766,7 @@ class readAndConvert:
                     _["convert"]        = None
                     _["tracker"]        = shell_ids_tracker
                     _["additional"]     = []
+                    _["essential"]      = True
                     
                     # Dyna output
                     array_requirements[ArrayType.element_shell_is_alive] = {}
@@ -786,6 +787,7 @@ class readAndConvert:
                     _["convert"]        = convert.element_shell_internal_energy
                     _["tracker"]        = shell_ids_tracker
                     _["additional"]     = []
+                    _["essential"]      = True
                     
                    # Dyna output
                     array_requirements[ArrayType.element_shell_stress] = {}
@@ -832,6 +834,7 @@ class readAndConvert:
                     insert_into_extent_binary("CARD_1b", "DEFAULT", [ArrayType.element_solid_is_alive,])
                     insert_into_extent_binary("CARD_1b", "STRFLG", [ArrayType.element_solid_strain,]) 
                     insert_into_extent_binary("CARD_1b", "SIGFLG", [ArrayType.element_solid_stress,])
+                    insert_into_extent_binary("CARD_1b", "EPSFLG", [ArrayType.element_solid_effective_plastic_strain,])
 
                     # Dyna output
                     array_requirements[ArrayType.element_solid_is_alive] = {}
@@ -861,6 +864,19 @@ class readAndConvert:
                     _["tracker"] = solid_ids_tracker
                     _["additional"] = [nip_solid]
 
+<<<<<<< HEAD
+=======
+                    # Dyna output
+                    array_requirements[ArrayType.element_solid_effective_plastic_strain] = {}
+                    _ = array_requirements[ArrayType.element_solid_effective_plastic_strain]
+                    _["dependents"] = ["PLACEHOLDER"]
+                    _["shape"] = (1,  n_solids, nip_solid)
+                    _["convert"] = None
+                    _["tracker"] = solid_ids_tracker
+                    _["additional"] = [nip_solid]                    
+
+
+>>>>>>> main
                     
             "Assign the arrays to the D3PLOT class for writing"
                         
@@ -905,6 +921,9 @@ class readAndConvert:
                         dependency_check[array_output] = all_dependents_exist
                         if all_dependents_exist:
                             flag_max[flag].add(array_group) 
+                        if "essential" in array_requirements[array_output]:
+                            if array_requirements[array_output]["essential"]:
+                                flag_max[flag].add(array_group)                            
             
             "Generate the output arrays"
   
