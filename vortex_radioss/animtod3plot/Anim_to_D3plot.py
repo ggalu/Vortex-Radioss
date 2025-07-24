@@ -569,8 +569,10 @@ class readAndConvert:
         if rr.raw_header["nbEltsSPH"] > 0:
             _ = readAndConvert.apply_sorter(rr.arrays["element_sph_part_indexes"], sph_ids_tracker) + shell_part_num + beam_part_num + solid_part_num
             self._d3plot.arrays[ArrayType.sph_node_indexes]             = inverted_node_ids_tracker[readAndConvert.apply_sorter(rr.arrays["sph_node_indexes"].astype(int), sph_ids_tracker).astype(int)]
-            self._d3plot.arrays[ArrayType.sph_node_material_index] = np.ones(len(rr.arrays["sph_node_indexes"]))*rr.raw_arrays["matPartSPH"].astype(int)
-
+            self._d3plot.arrays[ArrayType.sph_node_material_index]      = np.ones(len(rr.arrays["sph_node_indexes"]))*rr.raw_arrays["matPartSPH"].astype(int)
+            # Note: The only viable way I see to populate `sph_node_material_index` seems to be by creating a vector
+            # of the same size as the number of SPH elements and assigning it the values of `matPartSPH`.
+            
         self.LOGGER("Processing states", silent)
         
         for ifile, file in enumerate(tqdm(file_list, disable = silent)):            
@@ -616,6 +618,14 @@ class readAndConvert:
                 sph_is_alive.append(readAndConvert.apply_sorter(rr.arrays["sph_is_alive"], sph_ids_tracker))
                 self._d3plot.arrays[ArrayType.sph_is_alive]         = np.array(sph_is_alive).astype("<f")                   
 
+            # At this point, all necessary data for SPH elements has been extracted.
+            # The issues related to data handling here originate from the `lasso-python` library,
+            # particularly a `KeyError: 'numsph'`, which is likely a typo and should be `nmsph`.
+            
+            # Additionally, there are two contradictory checks regarding the length of the arrays
+            # `sph_node_indexes` and `sph_node_material_index`, which makes the code execution fail.
+              
+
             "Global"
             self._d3plot.arrays[ArrayType.global_timesteps]             = np.array(timesteps)
                                                            
@@ -641,7 +651,7 @@ class readAndConvert:
                 if n_nodes > 0:   
 
                     insert_into_extent_binary("CARD_1a", "IVEL", [ArrayType.node_velocity,])
-                    insert_into_extent_binary("CARD_1a", "STRFLG", [ArrayType.node_acceleration,]) 
+                    insert_into_extent_binary("CARD_1a", "IACC", [ArrayType.node_acceleration,]) 
                     
                     # Dyna output
                     array_requirements[ArrayType.node_velocity] = {}
@@ -864,8 +874,6 @@ class readAndConvert:
                     _["tracker"] = solid_ids_tracker
                     _["additional"] = [nip_solid]
 
-<<<<<<< HEAD
-=======
                     # Dyna output
                     array_requirements[ArrayType.element_solid_effective_plastic_strain] = {}
                     _ = array_requirements[ArrayType.element_solid_effective_plastic_strain]
@@ -873,10 +881,8 @@ class readAndConvert:
                     _["shape"] = (1,  n_solids, nip_solid)
                     _["convert"] = None
                     _["tracker"] = solid_ids_tracker
-                    _["additional"] = [nip_solid]                    
+                    _["additional"] = [nip_solid]
 
-
->>>>>>> main
                     
             "Assign the arrays to the D3PLOT class for writing"
                         
