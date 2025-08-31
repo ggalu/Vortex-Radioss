@@ -147,7 +147,7 @@ class RadiossReader:
     scalTextSPH                     - scalar names
     tensTextSPH                     - tensor names
     tensValSPH                      - tensor values
-    pTextSP                         - part names
+    pTextSPH                        - part names
     eMassSPH                        - element mass
     nodNumSPH                       - element numbering
     numParentSPH                    - parent number
@@ -767,7 +767,10 @@ class RadiossReader:
                 
                 # sph connectivity array
                 self.raw_arrays["connecSPH"], position      = self.add_array(self.raw_header["nbEltsSPH"], 1, position, bb, self.itype)
-                
+
+                # Element sph eroded array
+                self.raw_arrays["delEltSPH"] , position         = self.add_array(self.raw_header["nbEltsSPH"], 1, position, bb, self.btype)
+            
             if self.raw_header["nbPartsSPH"]:
                 
                 # Sph part indexes - needs unpacking
@@ -792,16 +795,15 @@ class RadiossReader:
                 # Sph tensor array
                 self.raw_arrays["tensValSPH"], position     = self.add_array(self.raw_header["nbEltsSPH"] * self.raw_header["nbTensSPH"], 6, position, bb, self.ftype)
                 
-            if self.raw_header["flag_a_0" == 1]:
+            if self.raw_header["flag_a_0"] == 1:
                 
                 # Sph mass
                 self.raw_arrays["eMassSPH"], position       = self.add_array(self.raw_header["nbEltsSPH"], 1, position, bb, self.ftype)
 
-            if self.raw_header["flag_a_1" == 1]:  
+            if self.raw_header["flag_a_1"] == 1:  
 
                 # Sph numbering
-                self.raw_arrays["nodNumSPH"], position      = self.add_array(self.raw_header["nbEltsSPH"], 1, position, bb, self.ftype)
-
+                self.raw_arrays["nodNumSPH"], position      = self.add_array(self.raw_header["nbEltsSPH"], 1, position, bb, self.itype) #we need to have integer (itype) and not float (ftype) here, because nodNumSPH is an index array
 
             if self.raw_header["flag_a_4"]:       
                 
@@ -849,9 +851,9 @@ class RadiossReader:
             self.arrays["element_shell_node_indexes"]   = np.array(self.raw_arrays["connectA"])
         if "connect3DA" in self.raw_arrays:
             self.arrays["element_solid_node_indexes"]   = np.array(self.raw_arrays["connect3DA"])
-        if "connectSPH" in self.raw_arrays:
-            self.arrays["element_sph_node_indexes"]     = np.array(self.raw_arrays["connecSPH"])
-                        
+        if "connecSPH" in self.raw_arrays:  
+            self.arrays["sph_node_indexes"] = np.array(self.raw_arrays["connecSPH"])
+
         # Node ids are unchanged
         if "nodNumA" in self.raw_arrays:    
             self.arrays["node_ids"] = np.array(self.raw_arrays["nodNumA"])
@@ -888,7 +890,7 @@ class RadiossReader:
             
          # Element sph ids are unchanged
         if "nodNumSPH" in self.raw_arrays:  
-            self.arrays["element_sph_ids"]      = np.array(self.raw_arrays["nodNumSPH"])             
+            self.arrays["element_sph_ids"]      = np.array(self.raw_arrays["nodNumSPH"])
 
         # Unpack 1D element part indexes
 
@@ -960,14 +962,21 @@ class RadiossReader:
             tmp_list_n=[]
             for _ipart0d, ipart0d in enumerate(self.raw_arrays["defPartSPH"]):
                 end             =   ipart0d
-                num_el          =   end - start 
+                num_el          =   end + start 
                 _tmp_list_i     =   [_ipart0d] * num_el
                 _tmp_list_n     =   [self.raw_arrays["pTextSPH"][_ipart0d].strip()] * num_el
                 start           =   end
                 tmp_list_i.extend(_tmp_list_i)
                 tmp_list_n.extend(_tmp_list_n)
-            self.arrays["element_sph_part_indexes"]     = np.array(tmp_list_i)
-            self.arrays["element_sph_part_names"]       = np.array(tmp_list_n)                     
+
+            self.arrays["element_sph_part_indexes"] = np.array(tmp_list_i)
+            self.arrays["element_sph_part_names"]   = np.array(tmp_list_n)
+
+            sph_part_ids = np.array(self.raw_arrays["pTextSPH"]).astype("U9").astype(int)
+            element_sph_pids = sph_part_ids[self.arrays["element_sph_part_indexes"]]
+
+            # Stocker les vrais PIDs
+            self.arrays["element_sph_part_pids"] = element_sph_pids
         
          # Eroded 1D element array is unchanged
         if "delElt1DA" in self.raw_arrays:
@@ -979,7 +988,11 @@ class RadiossReader:
         
          # Eroded solid element array is unchanged
         if "delElt3DA" in self.raw_arrays:
-            self.arrays["element_solid_is_alive"] = np.array(self.raw_arrays["delElt3DA"])                     
+            self.arrays["element_solid_is_alive"] = np.array(self.raw_arrays["delElt3DA"]) 
+        
+        # Eroded sph element array is unchanged
+        if "delEltSPH" in self.raw_arrays:
+            self.arrays["sph_is_alive"] = np.array(self.raw_arrays["delEltSPH"])                  
         
         # Unpack 1D scalar arrays
         if "nbEFunc1D" in self.raw_header:        
@@ -1043,7 +1056,7 @@ class RadiossReader:
                 self.arrays[tensor] = _tmp_list        
 
         # Unpack sph scalar arrays         
-        if self.raw_header["flag_a_7"]:      
+        if self.raw_header["nbEFuncSPH"]:      
             for iefun in range(0, self.raw_header["nbEFuncSPH"]):
                 scalar              = "element_sph_" + str(self.raw_arrays["scalTextSPH"][iefun]).lower().replace(" ", "_").strip()
                 start               = iefun * self.raw_header["nbEltsSPH"]
@@ -1051,19 +1064,15 @@ class RadiossReader:
                 tmp_list            = self.raw_arrays["eFuncSPH"][start : end]
                 self.arrays[scalar] = np.array(tmp_list)   
                 
-            print("SPH Tensors")
-            print((time.time() - time_start))
-            time_start = time.time()                 
-                    
-            # Unpack sph tensor arrays                       
-            if "nbTens" in self.raw_header:        
-                for ietens in range(0, self.raw_header["nbTensSPH"]):
-                    tensor                  = "element_sph_" + str(self.raw_arrays["tensTextSPH"][ietens]).lower().replace(" ", "_").strip()
-                    start                   = ietens * self.raw_header["nbEltsSPH"]
-                    end                     = (ietens+1) * self.raw_header["nbEltsSPH"]
-                    _tmp_list               = np.array(self.raw_arrays["nbEltsSPH"][start : end])                          
-                    
-                    self.arrays[tensor] = _tmp_list                      
+        # Unpack sph tensor arrays                       
+        if "nbTensSPH" in self.raw_header:        
+            for ietens in range(0, self.raw_header["nbTensSPH"]):
+                tensor                  = "element_sph_" + str(self.raw_arrays["tensTextSPH"][ietens]).lower().replace(" ", "_").strip()
+                start                   = ietens * self.raw_header["nbEltsSPH"]
+                end                     = (ietens+1) * self.raw_header["nbEltsSPH"]
+                _tmp_list               = np.array(self.raw_arrays["eFuncSPH"][start : end])                          
+                
+                self.arrays[tensor] = _tmp_list                      
 
         # Unpack subsets        
         if self.raw_header["flag_a_4"]: 
