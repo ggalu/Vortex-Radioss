@@ -1,0 +1,5 @@
+lasso-python
+tqdm
+numpy
+typing
+rich

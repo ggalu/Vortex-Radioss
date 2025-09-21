@@ -1,0 +1,11 @@
+LICENSE
+README.md
+setup.py
+AnimtoD3plot.egg-info/PKG-INFO
+AnimtoD3plot.egg-info/SOURCES.txt
+AnimtoD3plot.egg-info/dependency_links.txt
+AnimtoD3plot.egg-info/requires.txt
+AnimtoD3plot.egg-info/top_level.txt
+vortex_radioss/animtod3plot/Anim_to_D3plot.py
+vortex_radioss/animtod3plot/RadiossReader.py
+vortex_radioss/animtod3plot/RadiossTHReader.py

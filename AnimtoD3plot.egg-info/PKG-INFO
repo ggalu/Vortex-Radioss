@@ -1,0 +1,11 @@
+Metadata-Version: 2.1
+Name: AnimtoD3plot
+Version: 1.0
+Summary: AnimToD3plot conversion package
+License: Mozilla Public License Version 2.0
+License-File: LICENSE
+Requires-Dist: lasso-python
+Requires-Dist: tqdm
+Requires-Dist: numpy
+Requires-Dist: typing
+Requires-Dist: rich
